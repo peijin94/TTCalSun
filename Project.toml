@@ -1,0 +1,13 @@
+name = "TTCalSun"
+uuid = "ef1ad8f6-53bf-4f12-99f0-df7c9149c3e7"
+version = "0.1.0"
+authors = ["Peijin Zhang"]
+
+[deps]
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+PyCall = "438e738f-606a-5dbb-bf0a-cddfbfd45ab0"
+
+[compat]
+PyCall = "1.96.4"
+julia = "1.10, 1.11, 1.12"
