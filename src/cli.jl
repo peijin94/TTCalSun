@@ -6,6 +6,8 @@ function parse_args(args::Vector{String})
         "maxiter" => 30,
         "tolerance" => 1e-4,
         "minuvw" => 10.0,
+        "maxuvw" => Inf,
+        "beam" => "lwa178",
         "peeliter" => 3,
         "phase_only_maxiter" => 0,
         "timings" => false,
@@ -21,6 +23,10 @@ function parse_args(args::Vector{String})
             opts["tolerance"] = parse(Float64, split(arg, "=", limit=2)[2])
         elseif startswith(arg, "--minuvw=")
             opts["minuvw"] = parse(Float64, split(arg, "=", limit=2)[2])
+        elseif startswith(arg, "--maxuvw=")
+            opts["maxuvw"] = parse(Float64, split(arg, "=", limit=2)[2])
+        elseif startswith(arg, "--beam=")
+            opts["beam"] = split(arg, "=", limit=2)[2]
         elseif startswith(arg, "--peeliter=")
             opts["peeliter"] = parse(Int, split(arg, "=", limit=2)[2])
         elseif startswith(arg, "--phase-only-maxiter=")
@@ -48,25 +54,26 @@ end
 function run_cli(args::Vector{String}=ARGS)
     opts = parse_args(args)
     if get(opts, "help", false)
-        println("usage: ttcalsun.jl <peel|shave|zest|prune> [--column=CORRECTED_DATA] [--maxiter=30] [--tolerance=1e-4] [--minuvw=10] [--peeliter=3] [--phase-only-maxiter=0] [--timings] <sources.json> <ms1> [ms2 ...]")
+        println("usage: ttcalsun.jl <peel|shave|zest|prune> [--column=CORRECTED_DATA] [--maxiter=30] [--tolerance=1e-4] [--minuvw=10] [--maxuvw=INF] [--beam=lwa178] [--peeliter=3] [--phase-only-maxiter=0] [--timings] <sources.json> <ms1> [ms2 ...]")
         println("threads=$(nthreads())")
         return 0
     end
 
     command = Symbol(opts["command"])
     sources = read_sources(opts["sources"])
-    @printf("TTCalSun CPU mode: threads=%d, sources=%d, command=%s\n", nthreads(), length(sources), String(opts["command"]))
+    beam = parse_beam_model(String(opts["beam"]))
+    @printf("TTCalSun CPU mode: threads=%d, sources=%d, command=%s, beam=%s\n", nthreads(), length(sources), String(opts["command"]), beam_name(beam))
     for ms_path in opts["ms_files"]
         t0 = time()
         vis, meta, baseline_dict, nrows = read_ms(ms_path; column=opts["column"])
         result = if command == :peel
-            peel!(vis, meta, sources; peeliter=opts["peeliter"], maxiter=opts["maxiter"], tolerance=opts["tolerance"], minuvw=opts["minuvw"], phase_only_maxiter=opts["phase_only_maxiter"], return_timing=opts["timings"])
+            peel!(vis, meta, sources; peeliter=opts["peeliter"], maxiter=opts["maxiter"], tolerance=opts["tolerance"], minuvw=opts["minuvw"], maxuvw=opts["maxuvw"], phase_only_maxiter=opts["phase_only_maxiter"], beam=beam, return_timing=opts["timings"])
         elseif command == :shave
-            shave!(vis, meta, sources; peeliter=opts["peeliter"], maxiter=opts["maxiter"], tolerance=opts["tolerance"], minuvw=opts["minuvw"], phase_only_maxiter=opts["phase_only_maxiter"], return_timing=opts["timings"])
+            shave!(vis, meta, sources; peeliter=opts["peeliter"], maxiter=opts["maxiter"], tolerance=opts["tolerance"], minuvw=opts["minuvw"], maxuvw=opts["maxuvw"], phase_only_maxiter=opts["phase_only_maxiter"], beam=beam, return_timing=opts["timings"])
         elseif command == :zest
-            zest!(vis, meta, sources; peeliter=opts["peeliter"], maxiter=opts["maxiter"], tolerance=opts["tolerance"], minuvw=opts["minuvw"], phase_only_maxiter=opts["phase_only_maxiter"], return_timing=opts["timings"])
+            zest!(vis, meta, sources; peeliter=opts["peeliter"], maxiter=opts["maxiter"], tolerance=opts["tolerance"], minuvw=opts["minuvw"], maxuvw=opts["maxuvw"], phase_only_maxiter=opts["phase_only_maxiter"], beam=beam, return_timing=opts["timings"])
         elseif command == :prune
-            prune!(vis, meta, sources; peeliter=opts["peeliter"], maxiter=opts["maxiter"], tolerance=opts["tolerance"], minuvw=opts["minuvw"], phase_only_maxiter=opts["phase_only_maxiter"], return_timing=opts["timings"])
+            prune!(vis, meta, sources; peeliter=opts["peeliter"], maxiter=opts["maxiter"], tolerance=opts["tolerance"], minuvw=opts["minuvw"], maxuvw=opts["maxuvw"], phase_only_maxiter=opts["phase_only_maxiter"], beam=beam, return_timing=opts["timings"])
         else
             error("unsupported command: $(opts["command"])")
         end

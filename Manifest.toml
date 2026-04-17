@@ -2,7 +2,7 @@
 
 julia_version = "1.12.5"
 manifest_format = "2.0"
-project_hash = "24e64435c41e56925857d4305d9c5e2fa32b3c33"
+project_hash = "eac48f0f681bcf2a322f51af1cc99b1e1257d938"
 
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
@@ -164,7 +164,7 @@ uuid = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 version = "1.0.3"
 
 [[deps.TTCalSun]]
-deps = ["PyCall"]
+deps = ["LinearAlgebra", "Printf", "PyCall"]
 path = "."
 uuid = "ef1ad8f6-53bf-4f12-99f0-df7c9149c3e7"
 version = "0.1.0"

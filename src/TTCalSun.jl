@@ -6,12 +6,18 @@ using Printf
 using PyCall
 
 include("types.jl")
+include("beammodels.jl")
 include("sources.jl")
 include("msio.jl")
 include("cpu.jl")
 include("cli.jl")
 
 export AbstractSource,
+       AbstractBeamModel,
+       ConstantBeam,
+       SineBeam,
+       LWA178Beam,
+       Memo178Beam,
        PointSource,
        GaussianSource,
        MultiSource,
@@ -26,6 +32,7 @@ export AbstractSource,
        source_stokes_i,
        read_ms,
        write_ms!,
+       parse_beam_model,
        peel!,
        zest!,
        shave!,

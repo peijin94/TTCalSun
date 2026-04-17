@@ -65,14 +65,15 @@ struct SolveWorkspace
     step::Calibration
 end
 
-function baseline_keep_mask(meta::Metadata, minuvw::Float64)
+function baseline_keep_mask(meta::Metadata, minuvw::Float64, maxuvw::Float64=Inf)
     keep = trues(nbase(meta), nfreq(meta))
-    minuvw <= 0 && return keep
     @threads for β in 1:nfreq(meta)
         λ = LIGHT_SPEED / meta.channels[β]
-        threshold = minuvw * λ
+        min_threshold = minuvw <= 0 ? 0.0 : minuvw * λ
+        max_threshold = isfinite(maxuvw) ? maxuvw * λ : Inf
         @inbounds for α in 1:nbase(meta)
-            keep[α, β] = meta.baseline_lengths[α] >= threshold
+            length = meta.baseline_lengths[α]
+            keep[α, β] = length >= min_threshold && length <= max_threshold
         end
     end
     return keep
@@ -199,18 +200,49 @@ function corrupt!(vis::Visibilities, cal::Calibration, meta::Metadata)
     return vis
 end
 
-function genvis!(vis::Visibilities, meta::Metadata, source::PointSource; phase_center_ra::Float64, phase_center_dec::Float64)
+function apparent_stokes_i(source::Union{PointSource, GaussianSource}, frequency::Float64, beam::AbstractBeamModel; phase_center_ra::Float64, phase_center_dec::Float64)
+    I, Q, U, V = source.spectrum(frequency)
+    az, el = source_direction_azel(source, phase_center_ra, phase_center_dec)
+    xx, _, _, yy = apply_beam_to_coherency(
+        beam,
+        frequency,
+        az,
+        el,
+        ComplexF64(I + Q),
+        ComplexF64(U + im * V),
+        ComplexF64(U - im * V),
+        ComplexF64(I - Q),
+    )
+    return 0.5 * real(xx + yy)
+end
+
+function apparent_stokes_i(source::MultiSource, frequency::Float64, beam::AbstractBeamModel; phase_center_ra::Float64, phase_center_dec::Float64)
+    total = 0.0
+    for component in source.components
+        total += apparent_stokes_i(component, frequency, beam; phase_center_ra=phase_center_ra, phase_center_dec=phase_center_dec)
+    end
+    return total
+end
+
+function genvis!(vis::Visibilities, meta::Metadata, source::PointSource, beam::AbstractBeamModel; phase_center_ra::Float64, phase_center_dec::Float64)
     l, m, n = source_direction_lmn(source, phase_center_ra, phase_center_dec)
+    az, el = source_direction_azel(source, phase_center_ra, phase_center_dec)
     flux_xx = zeros(ComplexF64, nfreq(meta))
     flux_xy = zeros(ComplexF64, nfreq(meta))
     flux_yx = zeros(ComplexF64, nfreq(meta))
     flux_yy = zeros(ComplexF64, nfreq(meta))
     @inbounds for β in 1:nfreq(meta)
         I, Q, U, V = source.spectrum(meta.channels[β])
-        flux_xx[β] = ComplexF64(I + Q)
-        flux_xy[β] = ComplexF64(U + im * V)
-        flux_yx[β] = ComplexF64(U - im * V)
-        flux_yy[β] = ComplexF64(I - Q)
+        flux_xx[β], flux_xy[β], flux_yx[β], flux_yy[β] = apply_beam_to_coherency(
+            beam,
+            meta.channels[β],
+            az,
+            el,
+            ComplexF64(I + Q),
+            ComplexF64(U + im * V),
+            ComplexF64(U - im * V),
+            ComplexF64(I - Q),
+        )
     end
 
     @threads for β in 1:nfreq(meta)
@@ -234,18 +266,25 @@ function genvis!(vis::Visibilities, meta::Metadata, source::PointSource; phase_c
     return vis
 end
 
-function genvis!(vis::Visibilities, meta::Metadata, source::GaussianSource; phase_center_ra::Float64, phase_center_dec::Float64)
+function genvis!(vis::Visibilities, meta::Metadata, source::GaussianSource, beam::AbstractBeamModel; phase_center_ra::Float64, phase_center_dec::Float64)
     l, m, n = source_direction_lmn(source, phase_center_ra, phase_center_dec)
+    az, el = source_direction_azel(source, phase_center_ra, phase_center_dec)
     flux_xx = zeros(ComplexF64, nfreq(meta))
     flux_xy = zeros(ComplexF64, nfreq(meta))
     flux_yx = zeros(ComplexF64, nfreq(meta))
     flux_yy = zeros(ComplexF64, nfreq(meta))
     @inbounds for β in 1:nfreq(meta)
         I, Q, U, V = source.spectrum(meta.channels[β])
-        flux_xx[β] = ComplexF64(I + Q)
-        flux_xy[β] = ComplexF64(U + im * V)
-        flux_yx[β] = ComplexF64(U - im * V)
-        flux_yy[β] = ComplexF64(I - Q)
+        flux_xx[β], flux_xy[β], flux_yx[β], flux_yy[β] = apply_beam_to_coherency(
+            beam,
+            meta.channels[β],
+            az,
+            el,
+            ComplexF64(I + Q),
+            ComplexF64(U + im * V),
+            ComplexF64(U - im * V),
+            ComplexF64(I - Q),
+        )
     end
 
     dra = source.ra - phase_center_ra
@@ -284,9 +323,9 @@ function genvis!(vis::Visibilities, meta::Metadata, source::GaussianSource; phas
     return vis
 end
 
-function genvis!(vis::Visibilities, meta::Metadata, source::MultiSource; phase_center_ra::Float64, phase_center_dec::Float64)
+function genvis!(vis::Visibilities, meta::Metadata, source::MultiSource, beam::AbstractBeamModel; phase_center_ra::Float64, phase_center_dec::Float64)
     for component in source.components
-        genvis!(vis, meta, component; phase_center_ra=phase_center_ra, phase_center_dec=phase_center_dec)
+        genvis!(vis, meta, component, beam; phase_center_ra=phase_center_ra, phase_center_dec=phase_center_dec)
     end
     return vis
 end
@@ -519,14 +558,14 @@ function mode_flags(mode::Symbol)
     error("unsupported mode: $mode")
 end
 
-function prepare_workspaces(meta::Metadata, sources::Vector{<:AbstractSource}, mode::Symbol, keep::BitMatrix, source_timings::Vector{SourceTiming})
+function prepare_workspaces(meta::Metadata, sources::Vector{<:AbstractSource}, mode::Symbol, keep::BitMatrix, source_timings::Vector{SourceTiming}, beam::AbstractBeamModel)
     diagonal, wideband = mode_flags(mode)
     cal_nfreq = wideband ? 1 : nfreq(meta)
     workspaces = SourceWorkspace[]
     for (idx, source) in enumerate(sources)
         coherency = Visibilities(nbase(meta), nfreq(meta))
         t_genvis = time()
-        genvis!(coherency, meta, source; phase_center_ra=meta.phase_center_ra, phase_center_dec=meta.phase_center_dec)
+        genvis!(coherency, meta, source, beam; phase_center_ra=meta.phase_center_ra, phase_center_dec=meta.phase_center_dec)
         source_timings[idx].genvis_s += time() - t_genvis
 
         model_sq = SquareVisibilities(nant(meta), cal_nfreq)
@@ -541,7 +580,7 @@ function prepare_workspaces(meta::Metadata, sources::Vector{<:AbstractSource}, m
     return workspaces
 end
 
-function process_mode!(vis::Visibilities, meta::Metadata, sources::Vector{<:AbstractSource}, mode::Symbol; peeliter::Int, maxiter::Int, tolerance::Float64, minuvw::Float64, phase_only_maxiter::Int=0, return_timing::Bool=false)
+function process_mode!(vis::Visibilities, meta::Metadata, sources::Vector{<:AbstractSource}, mode::Symbol; peeliter::Int, maxiter::Int, tolerance::Float64, minuvw::Float64, maxuvw::Float64=Inf, phase_only_maxiter::Int=0, beam::AbstractBeamModel=LWA178Beam(), return_timing::Bool=false)
     total_t0 = time()
     active_sources = AbstractSource[
         source for source in sources
@@ -550,12 +589,12 @@ function process_mode!(vis::Visibilities, meta::Metadata, sources::Vector{<:Abst
     reference_frequency = meta.channels[cld(length(meta.channels), 2)]
     sort!(
         active_sources;
-        by=source -> source_stokes_i(source, reference_frequency),
+        by=source -> apparent_stokes_i(source, reference_frequency, beam; phase_center_ra=meta.phase_center_ra, phase_center_dec=meta.phase_center_dec),
         rev=true,
     )
-    keep = baseline_keep_mask(meta, minuvw)
+    keep = baseline_keep_mask(meta, minuvw, maxuvw)
     source_timings = [SourceTiming(source) for source in active_sources]
-    source_workspaces = prepare_workspaces(meta, active_sources, mode, keep, source_timings)
+    source_workspaces = prepare_workspaces(meta, active_sources, mode, keep, source_timings, beam)
     diagonal, wideband = mode_flags(mode)
     solve = SolveWorkspace(
         SquareVisibilities(nant(meta), wideband ? 1 : nfreq(meta)),
@@ -602,17 +641,17 @@ function process_mode!(vis::Visibilities, meta::Metadata, sources::Vector{<:Abst
     return return_timing ? (calibrations, timing) : calibrations
 end
 
-peel!(vis::Visibilities, meta::Metadata, sources::Vector{<:AbstractSource}; peeliter::Int=3, maxiter::Int=20, tolerance::Float64=1e-3, minuvw::Float64=10.0, phase_only_maxiter::Int=0, return_timing::Bool=false) =
-    process_mode!(vis, meta, sources, :peel; peeliter=peeliter, maxiter=maxiter, tolerance=tolerance, minuvw=minuvw, phase_only_maxiter=phase_only_maxiter, return_timing=return_timing)
+peel!(vis::Visibilities, meta::Metadata, sources::Vector{<:AbstractSource}; peeliter::Int=3, maxiter::Int=20, tolerance::Float64=1e-3, minuvw::Float64=10.0, maxuvw::Float64=Inf, phase_only_maxiter::Int=0, beam::AbstractBeamModel=LWA178Beam(), return_timing::Bool=false) =
+    process_mode!(vis, meta, sources, :peel; peeliter=peeliter, maxiter=maxiter, tolerance=tolerance, minuvw=minuvw, maxuvw=maxuvw, phase_only_maxiter=phase_only_maxiter, beam=beam, return_timing=return_timing)
 
-shave!(vis::Visibilities, meta::Metadata, sources::Vector{<:AbstractSource}; peeliter::Int=3, maxiter::Int=20, tolerance::Float64=1e-3, minuvw::Float64=10.0, phase_only_maxiter::Int=0, return_timing::Bool=false) =
-    process_mode!(vis, meta, sources, :shave; peeliter=peeliter, maxiter=maxiter, tolerance=tolerance, minuvw=minuvw, phase_only_maxiter=phase_only_maxiter, return_timing=return_timing)
+shave!(vis::Visibilities, meta::Metadata, sources::Vector{<:AbstractSource}; peeliter::Int=3, maxiter::Int=20, tolerance::Float64=1e-3, minuvw::Float64=10.0, maxuvw::Float64=Inf, phase_only_maxiter::Int=0, beam::AbstractBeamModel=LWA178Beam(), return_timing::Bool=false) =
+    process_mode!(vis, meta, sources, :shave; peeliter=peeliter, maxiter=maxiter, tolerance=tolerance, minuvw=minuvw, maxuvw=maxuvw, phase_only_maxiter=phase_only_maxiter, beam=beam, return_timing=return_timing)
 
-zest!(vis::Visibilities, meta::Metadata, sources::Vector{<:AbstractSource}; peeliter::Int=3, maxiter::Int=20, tolerance::Float64=1e-3, minuvw::Float64=10.0, phase_only_maxiter::Int=0, return_timing::Bool=false) =
-    process_mode!(vis, meta, sources, :zest; peeliter=peeliter, maxiter=maxiter, tolerance=tolerance, minuvw=minuvw, phase_only_maxiter=phase_only_maxiter, return_timing=return_timing)
+zest!(vis::Visibilities, meta::Metadata, sources::Vector{<:AbstractSource}; peeliter::Int=3, maxiter::Int=20, tolerance::Float64=1e-3, minuvw::Float64=10.0, maxuvw::Float64=Inf, phase_only_maxiter::Int=0, beam::AbstractBeamModel=LWA178Beam(), return_timing::Bool=false) =
+    process_mode!(vis, meta, sources, :zest; peeliter=peeliter, maxiter=maxiter, tolerance=tolerance, minuvw=minuvw, maxuvw=maxuvw, phase_only_maxiter=phase_only_maxiter, beam=beam, return_timing=return_timing)
 
-prune!(vis::Visibilities, meta::Metadata, sources::Vector{<:AbstractSource}; peeliter::Int=3, maxiter::Int=20, tolerance::Float64=1e-3, minuvw::Float64=10.0, phase_only_maxiter::Int=0, return_timing::Bool=false) =
-    process_mode!(vis, meta, sources, :prune; peeliter=peeliter, maxiter=maxiter, tolerance=tolerance, minuvw=minuvw, phase_only_maxiter=phase_only_maxiter, return_timing=return_timing)
+prune!(vis::Visibilities, meta::Metadata, sources::Vector{<:AbstractSource}; peeliter::Int=3, maxiter::Int=20, tolerance::Float64=1e-3, minuvw::Float64=10.0, maxuvw::Float64=Inf, phase_only_maxiter::Int=0, beam::AbstractBeamModel=LWA178Beam(), return_timing::Bool=false) =
+    process_mode!(vis, meta, sources, :prune; peeliter=peeliter, maxiter=maxiter, tolerance=tolerance, minuvw=minuvw, maxuvw=maxuvw, phase_only_maxiter=phase_only_maxiter, beam=beam, return_timing=return_timing)
 
 function print_timing_summary(io::IO, timing::ProcessTiming)
     @printf(io, "TTCalSun timing summary (%s): total %.2f s\n", String(timing.mode), timing.total_s)

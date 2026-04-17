@@ -1,12 +1,3 @@
-const _py_json = PyNULL()
-
-function _init_json()
-    if _py_json == PyNULL()
-        copy!(_py_json, pyimport("json"))
-    end
-    return _py_json
-end
-
 struct PowerLawSpectrum
     I::Float64
     Q::Float64
@@ -57,10 +48,19 @@ end
 
 get_name(source::AbstractSource) = source.name
 
+const _py_json = PyNULL()
+
+function _init_json()
+    if ispynull(_py_json)
+        copy!(_py_json, pyimport("json"))
+    end
+    return _py_json
+end
+
 function read_sources(filename::AbstractString)
     json = _init_json()
-    raw = pycall(json.loads, PyAny, read(filename, String))
-    return [construct_source(Dict(entry)) for entry in raw]
+    raw = json.loads(read(filename, String))
+    return [construct_source(Dict{Any, Any}(entry)) for entry in raw]
 end
 
 function construct_source(entry::Dict)
@@ -152,6 +152,19 @@ end
 function source_direction_lmn(source::MultiSource, phase_center_ra::Float64, phase_center_dec::Float64)
     isempty(source.components) && return 0.0, 0.0, 1.0
     return source_direction_lmn(source.components[1], phase_center_ra, phase_center_dec)
+end
+
+function source_direction_azel(source::Union{PointSource, GaussianSource}, phase_center_ra::Float64, phase_center_dec::Float64)
+    # TTCal-style beam models assume the MS phase center is the zenith direction.
+    l, m, n = source_direction_lmn(source, phase_center_ra, phase_center_dec)
+    el = asin(clamp(n, -1.0, 1.0))
+    az = mod(atan(l, m), 2π)
+    return az, el
+end
+
+function source_direction_azel(source::MultiSource, phase_center_ra::Float64, phase_center_dec::Float64)
+    isempty(source.components) && return 0.0, π / 2
+    return source_direction_azel(source.components[1], phase_center_ra, phase_center_dec)
 end
 
 function is_above_horizon(source::AbstractSource, phase_center_ra::Float64, phase_center_dec::Float64)

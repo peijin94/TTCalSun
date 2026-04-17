@@ -75,6 +75,7 @@ Single-file `73 MHz` run:
 ## Notes
 
 - This is intentionally CPU-only. There is no CUDA dependency in the package.
+- MS read/write is handled by `PyCall` + `python-casacore`.
 - The source reader accepts the current `TTCalX/sources.json` layout, including multi-component and Gaussian sources.
 - The CLI reads and writes the specified MS column in place.
 - The end-to-end peel benchmark driver for this workspace is in [tests/run_ttcalsun_peel_benchmark.sh](/fast/pipe2026solar/tests/run_ttcalsun_peel_benchmark.sh).
