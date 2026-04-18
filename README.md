@@ -9,27 +9,40 @@ CPU-only direction-dependent calibration for the local LWA workflow.
 This version is optimized for this workspace:
 - Measurement Sets from `./MS`
 - source models in the existing `TTCalX/sources.json` format
-- `python-casacore` from `./lwa/bin/python`
+- `python-casacore` from `/fast/rtpipe/env/lwa/bin/python`
 - batch processing of multiple MS files in one Julia process
+- Julia package state and temporary files under `/fast/rtpipe/env/juliadepot`
 
 ## Setup
 
-Build `PyCall` against the local `lwa` Python once:
+Initialize the Julia depot and precompile dependencies once:
 
 ```bash
-cd /fast/pipe2026solar/TTCalSun
-export PYTHON=/fast/pipe2026solar/lwa/bin/python
-julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.build("PyCall")'
+cd /fast/rtpipe/TTCalSun
+./install.sh
 ```
+
+`install.sh` also owns the runtime configuration used by the launcher. When
+executed, it installs and precompiles the Julia project. When sourced, it only
+sets environment variables:
+
+```bash
+source /fast/rtpipe/TTCalSun/install.sh
+```
+
+By default it sets `JULIA_DEPOT_PATH` to `/fast/rtpipe/env/juliadepot` and
+`TMPDIR` to `/fast/rtpipe/env/juliadepot/tmp`, so Julia registries, packages,
+precompile caches, scratchspaces, and temporary files stay out of shared `/tmp`
+and out of home directories that may be read-only in sandboxed runs.
 
 ## Usage
 
 Preferred entrypoint:
 
 ```bash
-/fast/pipe2026solar/TTCalSun/bin/ttcalsun_cpu.sh \
+/fast/rtpipe/TTCalSun/bin/ttcalsun_cpu.sh \
   peel \
-  /fast/pipe2026solar/TTCalX/sources.json \
+  /fast/rtpipe/TTCal.jl/test/sources.json \
   /path/to/file1.ms /path/to/file2.ms \
   --column=CORRECTED_DATA \
   --maxiter=30 \
@@ -78,4 +91,4 @@ Single-file `73 MHz` run:
 - MS read/write is handled by `PyCall` + `python-casacore`.
 - The source reader accepts the current `TTCalX/sources.json` layout, including multi-component and Gaussian sources.
 - The CLI reads and writes the specified MS column in place.
-- The end-to-end peel benchmark driver for this workspace is in [tests/run_ttcalsun_peel_benchmark.sh](/fast/pipe2026solar/tests/run_ttcalsun_peel_benchmark.sh).
+- The end-to-end peel benchmark driver for this workspace is in [tests/run_ttcalsun_peel_benchmark.py](/fast/rtpipe/tests/run_ttcalsun_peel_benchmark.py).
